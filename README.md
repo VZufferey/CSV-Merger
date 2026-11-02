@@ -30,7 +30,7 @@ includes it. No pip commands are needed.
 3. Review full paths. Remove files or move selections up/down to choose merge order.
 4. Choose the separator and input encoding shared by ALL selected files.
 5. Keep the header checkbox enabled for one output header. Disable it to remove all headers.
-6. Click **Merge / choose output...** and choose a NEW output filename.
+6. Click **Merge / choose output...** and choose an output filename.
 
 Inputs can be anywhere accessible to the computer. They do not need to share a folder.
 Order is the displayed order, not necessarily alphabetical. Within one file-picker
