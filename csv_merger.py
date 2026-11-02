@@ -19,10 +19,10 @@ class Cancelled(Exception):
 
 def merge_csv(files, output, delimiter=",", encoding="utf-8-sig",
               keep_header=True, cancel=None, notify=lambda text: None):
-    """Stream records into a temporary file; publish only on success.
+    """Read each input once; validate and stream into a temporary output.
 
     Every nonempty input must have one header record. Blank records are skipped.
-    Output must not exist. Returns the number of data records written.
+    Existing output is replaced only after success. Returns data record count.
     """
     cancel = cancel or threading.Event()
     files = [Path(p).resolve() for p in files]
@@ -32,22 +32,6 @@ def merge_csv(files, output, delimiter=",", encoding="utf-8-sig",
     if output in files:
         raise ValueError("The output cannot be one of the selected input files.")
     header = None
-    usable = []
-    for path in files:
-        if cancel.is_set():
-            raise Cancelled()
-        with path.open(encoding=encoding, newline="") as stream:
-            current = next((r for r in csv.reader(stream, delimiter=delimiter,
-                                                 strict=True) if r), None)
-        if current is None:
-            continue
-        if header is None:
-            header = current
-        elif current != header:
-            raise ValueError(f"Header or column order differs:\n{path}")
-        usable.append(path)
-    if header is None:
-        raise ValueError("All selected files are empty.")
     temp = None
     count = 0
     try:
@@ -56,15 +40,21 @@ def merge_csv(files, output, delimiter=",", encoding="utf-8-sig",
                 suffix=".tmp", delete=False) as dest:
             temp = Path(dest.name)
             writer = csv.writer(dest, delimiter=delimiter)
-            if keep_header:
-                writer.writerow(header)
-            for index, path in enumerate(usable, 1):
-                notify(f"File {index}/{len(usable)}: {path.name}")
+            for index, path in enumerate(files, 1):
+                if cancel.is_set():
+                    raise Cancelled()
+                notify(f"File {index}/{len(files)}: {path.name}")
                 with path.open(encoding=encoding, newline="") as stream:
                     reader = csv.reader(stream, delimiter=delimiter, strict=True)
                     current = next((r for r in reader if r), None)
-                    if current != header:
-                        raise ValueError(f"Input changed or header differs:\n{path}")
+                    if current is None:
+                        continue
+                    if header is None:
+                        header = current
+                        if keep_header:
+                            writer.writerow(header)
+                    elif current != header:
+                        raise ValueError(f"Header or column order differs:\n{path}")
                     for row in reader:
                         if cancel.is_set():
                             raise Cancelled()
@@ -76,10 +66,11 @@ def merge_csv(files, output, delimiter=",", encoding="utf-8-sig",
                         writer.writerow(row)
                         count += 1
                         if count % 50000 == 0:
-                            notify(f"File {index}/{len(usable)} | {count:,} rows written")
+                            notify(f"File {index}/{len(files)} | {count:,} rows written")
+            if header is None:
+                raise ValueError("All selected files are empty.")
         if cancel.is_set():
             raise Cancelled()
-        # Replace the destination only after the temporary output is complete.
         os.replace(temp, output)
         return count
     finally:

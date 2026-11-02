@@ -54,14 +54,14 @@ record, not on the complete dataset. Progress reports files and every 50,000 dat
 rows; it is not a byte-level percentage. Processing runs in a background thread.
 Cancel is checked between records; cancellation may wait for a large record or slow I/O.
 
-Headers are checked first. Output is written to a temporary file in the destination
-folder and published only after success.
+Headers are checked as each input file is processed. Output is written to a temporary
+file in the destination folder and published only after success.
 Normal errors and cancellation remove the temporary output. Forced termination or
 power loss may leave a `.csv-merge-*.tmp` file, which can be deleted after the app stops.
-Publication uses a hard link to avoid overwriting an output created concurrently.
-The destination filesystem must support hard links (normal local Windows NTFS does).
-On filesystems that do not support this, merging fails safely; choose a local NTFS
-folder and move the completed CSV afterwards. You need disk space for the merged file.
+Publication uses `os.replace()`, allowing an existing output to be overwritten only
+after a successful merge. The output cannot be one of the selected input files.
+You need disk space for the merged file in addition to any existing output until
+replacement completes.
 
 Output uses UTF-8 with BOM and the selected separator. Field values remain strings;
 quoting and line endings may change. No numeric or date inference is performed.
