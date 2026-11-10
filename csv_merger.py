@@ -18,7 +18,7 @@ class Cancelled(Exception):
 
 
 def merge_csv(files, output, delimiter=",", encoding="utf-8-sig",
-              keep_header=True, cancel=None, notify=lambda text: None):
+              keep_header=True, cancel=None, notify=lambda text: None, auto_detect=False):
     """Read each input once; validate and stream into a temporary output.
 
     Every nonempty input must have one header record. Blank records are skipped.
@@ -45,7 +45,23 @@ def merge_csv(files, output, delimiter=",", encoding="utf-8-sig",
                     raise Cancelled()
                 notify(f"File {index}/{len(files)}: {path.name}")
                 with path.open(encoding=encoding, newline="") as stream:
-                    reader = csv.reader(stream, delimiter=delimiter, strict=True)
+                    input_delimiter = delimiter
+                    if auto_detect:
+                        sample = stream.read(65536)
+                        stream.seek(0)
+                        if not sample.strip():
+                            continue
+                        try:
+                            input_delimiter = csv.Sniffer().sniff(
+                                sample, delimiters=",;\t").delimiter
+                        except csv.Error as exc:
+                            # A genuine single-column file has no separator to detect.
+                            if any(char in sample for char in ",;\t"):
+                                raise ValueError(
+                                    f"Cannot detect input separator: {path.name}. "
+                                    "Disable automatic detection and choose it manually."
+                                ) from exc
+                    reader = csv.reader(stream, delimiter=input_delimiter, strict=True)
                     current = next((r for r in reader if r), None)
                     if current is None:
                         continue
@@ -107,12 +123,17 @@ class App(tk.Tk if tk is not None else object):
         self.listbox.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns"); horizontal.grid(row=1, column=0, sticky="ew")
         opts = ttk.Frame(frame); opts.pack(fill="x", pady=10)
-        ttk.Label(opts, text="Separator:").pack(side="left")
+        ttk.Label(opts, text="Output separator:").pack(side="left")
         self.sep = ttk.Combobox(opts, values=["Comma", "Semicolon", "Tab"], state="readonly", width=12)
         self.sep.set("Comma"); self.sep.pack(side="left", padx=6)
         ttk.Label(opts, text="Input encoding:").pack(side="left")
         self.encoding = ttk.Combobox(opts, values=["utf-8-sig", "cp1252", "utf-16"], state="readonly", width=12)
         self.encoding.set("utf-8-sig"); self.encoding.pack(side="left", padx=6)
+        self.auto = tk.BooleanVar(value=True)
+        auto_check = ttk.Checkbutton(frame,
+            text="Detect input separator per file (comma / semicolon / tab)",
+            variable=self.auto)
+        auto_check.pack(anchor="w"); self.controls.append(auto_check)
         self.keep = tk.BooleanVar(value=True)
         check = ttk.Checkbutton(frame, text="Keep one header (uncheck to remove all headers)", variable=self.keep)
         check.pack(anchor="w"); self.controls.append(check)
@@ -176,14 +197,15 @@ class App(tk.Tk if tk is not None else object):
             return
         settings = (tuple(self.files), output,
                     {"Comma": ",", "Semicolon": ";", "Tab": "\t"}[self.sep.get()],
-                    self.encoding.get(), self.keep.get())
+                    self.encoding.get(), self.keep.get(), self.auto.get())
         self.cancel.clear(); self.set_busy(True)
         threading.Thread(target=self.worker, args=settings, daemon=True).start()
 
-    def worker(self, files, output, delimiter, encoding, keep):
+    def worker(self, files, output, delimiter, encoding, keep, auto):
         try:
             count = merge_csv(files, output, delimiter, encoding, keep, self.cancel,
-                              lambda msg: self.events.put(("status", msg)))
+                              lambda msg: self.events.put(("status", msg)),
+                              auto_detect=auto)
             self.events.put(("done", f"Merged {count:,} data rows.\n{output}"))
         except Cancelled:
             self.events.put(("cancelled", "Cancelled. Temporary output removed."))
